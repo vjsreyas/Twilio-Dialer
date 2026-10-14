@@ -5,6 +5,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
 const twilio = require('twilio');
+const Phone = require('./public/phone.js');
 
 const env = process.env;
 const REQUIRED = ['APP_PASSWORD', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_API_KEY', 'TWILIO_API_SECRET', 'TWILIO_TWIML_APP_SID', 'TWILIO_CALLER_ID'];
@@ -20,50 +21,14 @@ if (env.APP_PASSWORD.length < 8) {
 }
 
 const PORT = Number(env.PORT || 3000);
-const MAX_CALL_SECONDS = Number(env.MAX_CALL_SECONDS || 900);
-const DAILY_CAP = Number(env.DAILY_CAP_PER_NUMBER || 0);
-const MONTHLY_CAP = Number(env.MONTHLY_CAP_PER_NUMBER || 0);
-const WINDOW_START_MIN = Number(env.WINDOW_START_HOUR || 9) * 60;
-const WINDOW_END_MIN = Number(env.WINDOW_END_HOUR || 20) * 60;
-const STATS_TZ = env.STATS_TZ || 'America/Chicago';
-const COST_PER_MIN = 0.018; // $0.014 outbound call + $0.004 browser leg (estimate)
-// Entries may be written as +E.164 or UK national format (020..., 07..., 01...); all are stored as E.164.
-const TEST_NUMBERS = new Set(String(env.TEST_NUMBERS || '').split(',').map((s) => s.trim()).filter(Boolean)
-  .map((s) => (s.startsWith('+') ? '+' + s.replace(/\D/g, '') : normalizeUK(s))).filter(Boolean));
+// Twilio's own ceiling is 4 hours. Set MAX_CALL_SECONDS lower if you want a safety cut-off.
+const MAX_CALL_SECONDS = Math.min(14400, Number(env.MAX_CALL_SECONDS || 14400));
 const DATA_FILE = env.DATA_FILE || path.join(__dirname, 'data.json');
 
-// ---------- guards: where we are allowed to dial ----------
-// Caribbean, US-territory, premium-rate and Alaska area codes carry much higher per-minute rates
-// or are not covered by the plain "US & Canada" rate. Blocked by default.
-const BLOCKED_AREA_CODES = new Set([
-  '242', '246', '264', '268', '284', '340', '345', '441', '473', '649', '664', '670', '671',
-  '684', '721', '758', '767', '784', '787', '809', '829', '849', '868', '869', '876', '939',
-  '907', '900', '976',
-]);
-
-const STATE_TZ = {
-  CT: 'America/New_York', DE: 'America/New_York', DC: 'America/New_York', FL: 'America/New_York',
-  GA: 'America/New_York', IN: 'America/New_York', KY: 'America/New_York', ME: 'America/New_York',
-  MD: 'America/New_York', MA: 'America/New_York', MI: 'America/New_York', NH: 'America/New_York',
-  NJ: 'America/New_York', NY: 'America/New_York', NC: 'America/New_York', OH: 'America/New_York',
-  PA: 'America/New_York', RI: 'America/New_York', SC: 'America/New_York', VT: 'America/New_York',
-  VA: 'America/New_York', WV: 'America/New_York',
-  AL: 'America/Chicago', AR: 'America/Chicago', IL: 'America/Chicago', IA: 'America/Chicago',
-  KS: 'America/Chicago', LA: 'America/Chicago', MN: 'America/Chicago', MS: 'America/Chicago',
-  MO: 'America/Chicago', NE: 'America/Chicago', ND: 'America/Chicago', OK: 'America/Chicago',
-  SD: 'America/Chicago', TN: 'America/Chicago', TX: 'America/Chicago', WI: 'America/Chicago',
-  AZ: 'America/Phoenix', CO: 'America/Denver', ID: 'America/Denver', MT: 'America/Denver',
-  NM: 'America/Denver', UT: 'America/Denver', WY: 'America/Denver',
-  CA: 'America/Los_Angeles', NV: 'America/Los_Angeles', OR: 'America/Los_Angeles', WA: 'America/Los_Angeles',
-  AK: 'America/Anchorage', HI: 'Pacific/Honolulu',
-};
-
-const CLOSED_STATUSES = new Set(['interested', 'not_interested', 'wrong_number', 'dnc']);
-const ANSWERED = new Set(['callback', 'interested', 'not_interested', 'wrong_number', 'dnc']);
-const OUTCOMES = new Set(['no_answer', 'voicemail', 'callback', 'interested', 'not_interested', 'wrong_number', 'dnc']);
+const OUTCOMES = new Set(['no_answer', 'hung_up', 'not_interested', 'potential', 'meeting']);
 
 // ---------- storage (one JSON file; fine for a few thousand leads) ----------
-let db = { leads: [], calls: [], dnc: [] };
+let db = { leads: [], calls: [] };
 if (fs.existsSync(DATA_FILE)) {
   try {
     db = Object.assign(db, JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
@@ -79,94 +44,12 @@ function save() {
 }
 
 // ---------- helpers ----------
-function normalizePhone(raw) {
-  const s = String(raw || '').trim();
-  if (s.startsWith('+')) {
-    const e164 = '+' + s.replace(/\D/g, '');
-    if (TEST_NUMBERS.has(e164)) return e164;
-  } else {
-    const uk = normalizeUK(s);
-    if (uk && TEST_NUMBERS.has(uk)) return uk;
-  }
-  let d = s.replace(/\D/g, '');
-  if (d.length === 11 && d[0] === '1') d = d.slice(1);
-  if (!/^[2-9]\d{2}[2-9]\d{6}$/.test(d)) return null;
-  return '+1' + d;
-}
-
-const fmtCache = new Map();
-function partsFormatter(tz) {
-  if (!fmtCache.has(tz)) {
-    fmtCache.set(tz, new Intl.DateTimeFormat('en-US', {
-      timeZone: tz, hour: 'numeric', minute: 'numeric', hour12: false,
-      year: 'numeric', month: '2-digit', day: '2-digit',
-    }));
-  }
-  return fmtCache.get(tz);
-}
-
-function localParts(tz, date) {
-  const f = partsFormatter(tz);
-  const p = Object.fromEntries(f.formatToParts(date || new Date()).map((x) => [x.type, x.value]));
-  let h = parseInt(p.hour, 10);
-  if (h === 24) h = 0;
-  return { minutes: h * 60 + parseInt(p.minute, 10), ymd: p.year + '-' + p.month + '-' + p.day };
-}
-
-function formatLocal(tz) {
-  return new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit' }).format(new Date());
-}
-
-function leadTz(lead) {
-  if (lead.timezone) {
-    try { new Intl.DateTimeFormat('en-US', { timeZone: lead.timezone }); return lead.timezone; } catch (e) { /* fall through */ }
-  }
-  return STATE_TZ[String(lead.state || '').toUpperCase()] || null;
-}
-
-function callsByPhone() {
-  const m = new Map();
-  for (const c of db.calls) {
-    if (!m.has(c.phone)) m.set(c.phone, []);
-    m.get(c.phone).push(c);
-  }
-  return m;
-}
-
-function attemptsFor(phone, tz, byPhone) {
-  const now = Date.now();
-  const today = tz ? localParts(tz).ymd : null;
-  let total = 0, todayN = 0, month = 0;
-  for (const c of (byPhone.get(phone) || [])) {
-    total++;
-    const t = new Date(c.startedAt);
-    if (now - t.getTime() <= 30 * 24 * 3600 * 1000) month++;
-    if (today && localParts(tz, t).ymd === today) todayN++;
-  }
-  return { total, today: todayN, month };
-}
-
-function checkLead(lead, dncSet, byPhone) {
-  const out = { ok: false, reason: null, localTime: null, attempts: 0 };
-  const tz = leadTz(lead);
-  if (tz) out.localTime = formatLocal(tz);
-  const att = attemptsFor(lead.phone, tz, byPhone);
-  out.attempts = att.total;
-  if (dncSet.has(lead.phone) || lead.status === 'dnc') { out.reason = 'On the do-not-call list'; return out; }
-  if (CLOSED_STATUSES.has(lead.status)) { out.reason = 'Closed: ' + lead.status.replace('_', ' '); return out; }
-  if (TEST_NUMBERS.has(lead.phone)) { out.ok = true; out.reason = null; return out; }
-  const area = lead.phone.slice(2, 5);
-  if (BLOCKED_AREA_CODES.has(area)) { out.reason = 'Area code ' + area + ' is blocked (higher rates)'; return out; }
-  if (!tz) { out.reason = 'Add a state or timezone to this lead'; return out; }
-  const lp = localParts(tz);
-  if (lp.minutes < WINDOW_START_MIN || lp.minutes >= WINDOW_END_MIN) {
-    out.reason = 'Outside calling hours (' + out.localTime + ' there)';
-    return out;
-  }
-  if (DAILY_CAP > 0 && att.today >= DAILY_CAP) { out.reason = 'Daily limit reached (' + DAILY_CAP + ' per number)'; return out; }
-  if (MONTHLY_CAP > 0 && att.month >= MONTHLY_CAP) { out.reason = 'Monthly limit reached (' + MONTHLY_CAP + ' per number)'; return out; }
-  out.ok = true;
-  return out;
+const clean = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
+function leadFields(r) {
+  return {
+    name: clean(r.name, 120), company: clean(r.company, 120), country: clean(r.country, 60),
+    email: clean(r.email, 160), notes: clean(r.notes, 1000),
+  };
 }
 
 function safeEqual(a, b) {
@@ -188,7 +71,7 @@ function normalizeIntl(raw) {
   return /^\+[1-9]\d{7,14}$/.test(e164) ? e164 : null;
 }
 function maskNumber(n) { return n ? n.slice(0, 3) + ' ••• ' + n.slice(-3) : 'Guest types a UK number'; }
-// UK numbers only: mobiles (07x, not pagers/personal) and ordinary 01/02 landlines. Blocks 03/08/09 and premium/special rates.
+// Open guest links (guest types the number): UK mobiles (07x) and ordinary 01/02 landlines only.
 function normalizeUK(raw) {
   let d = String(raw || '').replace(/\D/g, '');
   if (d.startsWith('0044')) d = d.slice(2);
@@ -219,21 +102,21 @@ app.get('/vendor/twilio.js', (req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules', '@twilio', 'voice-sdk', 'dist', 'twilio.min.js')));
 app.get('/health', (req, res) => res.json({ ok: true }));
 
-// Twilio calls this when the browser starts a call. Signature-checked; only imported leads can be dialed.
+// Twilio calls these. Signature-checked so only Twilio can trigger a dial.
 const validateTwilio = env.INSECURE_SKIP_SIGNATURE_CHECK === '1'
   ? (req, res, next) => next()
   : (req, res, next) => {
     const sig = req.get('X-Twilio-Signature') || '';
     const url = 'https://' + req.get('host') + req.originalUrl;
     if (sig && twilio.validateRequest(env.TWILIO_AUTH_TOKEN, sig, url, req.body || {})) return next();
-    console.warn('Rejected /voice request: ' + (sig ? 'Twilio signature does not match.' : 'no Twilio signature (not from Twilio).'));
+    console.warn('Rejected ' + req.path + ' request: ' + (sig ? 'Twilio signature does not match.' : 'no Twilio signature (not from Twilio).'));
     console.warn('  URL used for the check: ' + url);
-    console.warn('  Fix: make TWILIO_AUTH_TOKEN in .env your real Auth Token, and make the TwiML App Voice URL exactly this address.');
+    console.warn('  Fix: make TWILIO_AUTH_TOKEN in .env your real Auth Token, and make the TwiML App Voice URL exactly https://YOUR-URL/voice');
     res.status(403).send('Forbidden');
   };
-app.use('/voice', (req, res, next) => { console.log('/voice hit: ' + req.method + ' from ' + (req.get('user-agent') || 'unknown')); next(); });
+const twilioForm = express.urlencoded({ extended: false });
 
-app.post('/voice', express.urlencoded({ extended: false }), validateTwilio, (req, res) => {
+app.post('/voice', twilioForm, validateTwilio, (req, res) => {
   const vr = new twilio.twiml.VoiceResponse();
   const block = (why) => {
     console.warn('Blocked call: ' + why);
@@ -247,7 +130,6 @@ app.post('/voice', express.urlencoded({ extended: false }), validateTwilio, (req
     const g = guestFor(req.body.GuestToken);
     if (!g || from !== 'client:guest-' + g.id) return block('invalid or expired guest link');
     if (g.calls >= g.maxCalls) return block('guest call limit reached');
-    // Locked link: always the one number. Open link: the guest types a UK number, checked here.
     const dest = g.number || normalizeUK(req.body.To);
     if (!dest) return block('guest number is not an allowed UK number');
     g.calls++;
@@ -256,23 +138,34 @@ app.post('/voice', express.urlencoded({ extended: false }), validateTwilio, (req
     gd.number(dest);
     return res.type('text/xml').send(vr.toString());
   }
+  // Main dialer: the number must belong to a saved lead (any country).
   const lead = db.leads.find((l) => l.id === req.body.LeadId);
-  const phone = normalizePhone(req.body.To);
   if (!lead) return block('unknown lead');
-  if (!phone || phone !== lead.phone) return block('number does not match lead');
-  const c = checkLead(lead, new Set(db.dnc), callsByPhone());
-  if (!c.ok) return block(c.reason);
+  if (Phone.normalize(req.body.To) !== lead.phone) return block('number does not match lead');
   db.calls.push({
-    id: crypto.randomUUID(), leadId: lead.id, phone, startedAt: new Date().toISOString(),
-    callSid: req.body.CallSid || null, durationSec: null, outcome: null, notes: '',
+    id: crypto.randomUUID(), leadId: lead.id, name: lead.name, company: lead.company, phone: lead.phone,
+    startedAt: new Date().toISOString(), callSid: req.body.CallSid || null,
+    dialStatus: null, talkSec: null, durationSec: null, outcome: null, notes: '',
   });
   save();
-  const dial = vr.dial({ callerId: env.TWILIO_CALLER_ID, answerOnBridge: true, timeLimit: MAX_CALL_SECONDS });
-  dial.number(phone);
+  const dial = vr.dial({ callerId: env.TWILIO_CALLER_ID, answerOnBridge: true, timeLimit: MAX_CALL_SECONDS, action: '/voice/status', method: 'POST' });
+  dial.number(lead.phone);
   res.type('text/xml').send(vr.toString());
 });
 
-const json = express.json({ limit: '5mb' });
+// Twilio posts here when the dialed leg ends: real answered/no-answer/busy status and billed talk seconds.
+app.post('/voice/status', twilioForm, validateTwilio, (req, res) => {
+  const c = req.body.CallSid ? db.calls.find((x) => x.callSid === req.body.CallSid) : null;
+  if (c) {
+    c.dialStatus = String(req.body.DialCallStatus || '') || null;
+    c.talkSec = Math.max(0, Number(req.body.DialCallDuration) || 0);
+    c.endedAt = new Date().toISOString();
+    save();
+  }
+  res.type('text/xml').send(new twilio.twiml.VoiceResponse().toString());
+});
+
+const json = express.json({ limit: '20mb' });
 
 // ----- guest links: admin side (password) -----
 app.use(['/g', '/api/guest'], (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
@@ -284,7 +177,6 @@ app.post('/api/guest/create', auth, json, (req, res) => {
   const rawNumber = String((req.body || {}).number || '').trim();
   const number = rawNumber ? normalizeIntl(rawNumber) : null;
   if (rawNumber && !number) return res.status(400).json({ error: 'Use the full international format, like +447123456789' });
-  if (number && number.startsWith('+1') && BLOCKED_AREA_CODES.has(number.slice(2, 5))) return res.status(400).json({ error: 'That area code is blocked (higher rates)' });
   const clamp = (v, lo, hi, d) => Math.min(hi, Math.max(lo, Math.round(Number(v)) || d));
   const minutes = clamp(req.body.minutes, 5, 240, 30);
   const g = {
@@ -328,6 +220,7 @@ app.get('/api/guest/:token/token', (req, res) => {
   res.json({ token: token.toJwt() });
 });
 
+// ----- main app -----
 app.get('/api/token', auth, (req, res) => {
   const AccessToken = twilio.jwt.AccessToken;
   const token = new AccessToken(env.TWILIO_ACCOUNT_SID, env.TWILIO_API_KEY, env.TWILIO_API_SECRET, { identity: 'dialer', ttl: 3600 });
@@ -336,53 +229,78 @@ app.get('/api/token', auth, (req, res) => {
 });
 
 app.get('/api/state', auth, (req, res) => {
-  const dnc = new Set(db.dnc);
-  const byPhone = callsByPhone();
-  const leads = db.leads.map((l) => {
-    const c = checkLead(l, dnc, byPhone);
-    return Object.assign({}, l, { callable: c.ok, reason: c.reason, localTime: c.localTime, attempts: c.attempts });
-  });
-  const today = localParts(STATS_TZ).ymd;
-  const todays = db.calls.filter((c) => localParts(STATS_TZ, new Date(c.startedAt)).ymd === today);
-  const seconds = todays.reduce((s, c) => s + (c.durationSec || 0), 0);
-  res.json({
-    leads,
-    stats: {
-      calls: todays.length,
-      talkMinutes: Math.round(seconds / 6) / 10,
-      estCost: Math.round(seconds / 60 * COST_PER_MIN * 100) / 100,
-      interested: todays.filter((c) => c.outcome === 'interested').length,
-      answered: todays.filter((c) => ANSWERED.has(c.outcome)).length,
-      tz: STATS_TZ,
-    },
-    limits: { daily: DAILY_CAP, monthly: MONTHLY_CAP, windowStart: WINDOW_START_MIN / 60, windowEnd: WINDOW_END_MIN / 60, maxCallSeconds: MAX_CALL_SECONDS },
-  });
+  const byLead = new Map();
+  for (const c of db.calls) {
+    const s = byLead.get(c.leadId) || { attempts: 0, lastCallAt: null };
+    s.attempts++;
+    if (!s.lastCallAt || c.startedAt > s.lastCallAt) s.lastCallAt = c.startedAt;
+    byLead.set(c.leadId, s);
+  }
+  const leads = db.leads.map((l) => Object.assign({ status: 'new' }, l, byLead.get(l.id) || { attempts: 0, lastCallAt: null }));
+  res.json({ leads });
 });
 
 app.post('/api/leads/import', auth, json, (req, res) => {
   const rows = Array.isArray(req.body.leads) ? req.body.leads : [];
-  const dnc = new Set(db.dnc);
+  const code = req.body.defaultCode;
   const have = new Set(db.leads.map((l) => l.phone));
   let added = 0;
   const skipped = [];
   rows.forEach((r, i) => {
-    const phone = normalizePhone(r.phone);
-    const row = i + 2;
-    if (!phone) return skipped.push({ row, reason: 'Invalid US/Canada phone number' });
-    if (have.has(phone)) return skipped.push({ row, reason: 'Duplicate number' });
-    if (dnc.has(phone)) return skipped.push({ row, reason: 'On the do-not-call list' });
-    const state = String(r.state || '').trim().toUpperCase().slice(0, 2);
-    const timezone = String(r.timezone || '').trim();
-    if (!timezone && !STATE_TZ[state] && !TEST_NUMBERS.has(phone)) return skipped.push({ row, reason: 'Missing or unknown state (or timezone)' });
-    db.leads.push({
-      id: crypto.randomUUID(), name: String(r.name || '').trim().slice(0, 120), company: String(r.company || '').trim().slice(0, 120),
-      phone, state, timezone, notes: String(r.notes || '').trim().slice(0, 500), status: 'new', createdAt: new Date().toISOString(),
-    });
+    const row = Number(r.row) || i + 1;
+    const f = leadFields(r);
+    const phone = Phone.normalize(r.phone, code);
+    if (!f.name) return skipped.push({ row, reason: 'Missing name' });
+    if (!phone) return skipped.push({ row, reason: 'Invalid number' });
+    if (have.has(phone)) return skipped.push({ row, reason: 'Already in your leads' });
+    db.leads.push(Object.assign({ id: crypto.randomUUID() }, f, { phone, status: 'new', createdAt: new Date().toISOString() }));
     have.add(phone);
     added++;
   });
-  save();
+  if (added) save();
   res.json({ added, skipped });
+});
+
+app.patch('/api/leads/:id', auth, json, (req, res) => {
+  const lead = db.leads.find((l) => l.id === req.params.id);
+  if (!lead) return res.status(404).json({ error: 'Lead not found' });
+  const b = req.body || {};
+  const f = leadFields(Object.assign({}, lead, b));
+  if (!f.name) return res.status(400).json({ error: 'Name is required' });
+  if (b.phone != null) {
+    const phone = Phone.normalize(b.phone, b.defaultCode);
+    if (!phone) return res.status(400).json({ error: 'That number is not valid. Include the country code, like +44...' });
+    if (phone !== lead.phone && db.leads.some((l) => l.phone === phone)) return res.status(400).json({ error: 'Another lead already has that number' });
+    lead.phone = phone;
+  }
+  Object.assign(lead, f);
+  save();
+  res.json({ ok: true });
+});
+
+app.post('/api/leads/delete', auth, json, (req, res) => {
+  const ids = new Set(Array.isArray(req.body.ids) ? req.body.ids : []);
+  const before = db.leads.length;
+  db.leads = db.leads.filter((l) => !ids.has(l.id)); // call log entries are kept
+  save();
+  res.json({ deleted: before - db.leads.length });
+});
+
+// Newest first. Filters: leadId, since (ISO time), limit.
+app.get('/api/calls', auth, (req, res) => {
+  const since = req.query.since ? Date.parse(String(req.query.since)) : NaN;
+  const leadId = req.query.leadId ? String(req.query.leadId) : null;
+  const limit = Math.min(20000, Number(req.query.limit) || 5000);
+  const leads = new Map(db.leads.map((l) => [l.id, l]));
+  const calls = [];
+  for (let i = db.calls.length - 1; i >= 0 && calls.length < limit; i--) {
+    const c = db.calls[i];
+    if (leadId && c.leadId !== leadId) continue;
+    if (!Number.isNaN(since) && Date.parse(c.startedAt) < since) continue;
+    const l = leads.get(c.leadId);
+    calls.push(Object.assign({}, c, { name: (l && l.name) || c.name || '', company: (l && l.company) || c.company || '', leadExists: !!l }));
+  }
+  res.json({ calls });
 });
 
 app.post('/api/calls/outcome', auth, json, (req, res) => {
@@ -393,31 +311,49 @@ app.post('/api/calls/outcome', auth, json, (req, res) => {
   let call = callSid ? db.calls.find((c) => c.callSid === callSid) : null;
   if (!call) call = db.calls.slice().reverse().find((c) => c.leadId === leadId && !c.outcome);
   if (!call) {
-    call = { id: crypto.randomUUID(), leadId, phone: lead.phone, startedAt: new Date().toISOString(), callSid: callSid || null };
+    call = { id: crypto.randomUUID(), leadId, name: lead.name, company: lead.company, phone: lead.phone, startedAt: new Date().toISOString(), callSid: callSid || null };
     db.calls.push(call);
   }
   call.outcome = outcome;
   call.durationSec = Math.max(0, Math.min(Number(durationSec) || 0, MAX_CALL_SECONDS + 60));
-  call.notes = String(notes || '').slice(0, 1000);
+  call.notes = clean(notes, 2000);
   lead.status = outcome;
-  if (outcome === 'dnc' && !db.dnc.includes(lead.phone)) db.dnc.push(lead.phone);
+  save();
+  res.json({ ok: true });
+});
+
+// Fix an outcome or add a note to a call later (from the Call log tab).
+app.patch('/api/calls/:id', auth, json, (req, res) => {
+  const call = db.calls.find((c) => c.id === req.params.id);
+  if (!call) return res.status(404).json({ error: 'Call not found' });
+  const b = req.body || {};
+  if (b.outcome != null) {
+    if (!OUTCOMES.has(b.outcome)) return res.status(400).json({ error: 'Unknown outcome' });
+    call.outcome = b.outcome;
+    const lead = db.leads.find((l) => l.id === call.leadId);
+    const latest = db.calls.slice().reverse().find((c) => c.leadId === call.leadId);
+    if (lead && latest === call) lead.status = b.outcome;
+  }
+  if (b.notes != null) call.notes = clean(b.notes, 2000);
   save();
   res.json({ ok: true });
 });
 
 app.get('/api/export.csv', auth, (req, res) => {
   const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
-  const lines = [['started_at', 'name', 'company', 'phone', 'outcome', 'duration_sec', 'call_sid', 'notes'].join(',')];
+  const leads = new Map(db.leads.map((l) => [l.id, l]));
+  const lines = [['started_at', 'name', 'company', 'phone', 'line_status', 'talk_sec', 'outcome', 'notes', 'call_sid'].join(',')];
   for (const c of db.calls) {
-    const l = db.leads.find((x) => x.id === c.leadId) || {};
-    lines.push([c.startedAt, l.name, l.company, c.phone, c.outcome, c.durationSec, c.callSid, c.notes].map(q).join(','));
+    const l = leads.get(c.leadId) || {};
+    const talk = c.talkSec != null ? c.talkSec : c.durationSec;
+    lines.push([c.startedAt, l.name || c.name, l.company || c.company, c.phone, c.dialStatus, talk, c.outcome, c.notes, c.callSid].map(q).join(','));
   }
   res.type('text/csv').send(lines.join('\n'));
 });
 
 app.use((err, req, res, next) => {
   console.error(err);
-  res.status(500).json({ error: 'Server error' });
+  res.status(err.status || 500).json({ error: err.type === 'entity.too.large' ? 'That list is too big to send at once. Split it in two.' : 'Server error' });
 });
 
 app.listen(PORT, () => {

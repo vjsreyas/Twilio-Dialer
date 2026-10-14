@@ -10,7 +10,7 @@ No auto-dialing, no AI voice, no recording.
 2. Phone Numbers > Buy a number: US, local, Voice-capable. This is your caller ID.
 3. Account > API keys & tokens > Create API key (Standard). Copy the `SK...` SID and the secret now (shown once).
 4. Voice > Manage > TwiML Apps > Create. Voice Request URL: `https://YOUR-HTTPS-URL/voice`, method POST. Copy the `AP...` SID.
-5. Voice > Settings > Geo permissions: enable **United States and Canada only**. Disable everything else.
+5. Voice > Settings > Geo permissions: enable only the countries you call (e.g. UK, US/Canada, India). Disable everything else.
 6. Copy your Account SID and Auth Token from the console home (the Auth Token validates that /voice requests really come from Twilio).
 
 ### 2. This app
@@ -27,27 +27,23 @@ Twilio must reach `/voice` over https.
 - Later: deploy on a small VPS with a fixed domain. Keep `data.json` on a persistent disk (free tiers like Render's wipe it).
 
 ### 4. Test before real leads
-- Put your own number in `TEST_NUMBERS` (e.g. `+91...`) and temporarily enable that country in Geo permissions. Import it as a lead, call it. Remove both after testing.
-- Check: audio both ways, hang up, outcome saved, Export log works.
+Add your own number as a lead and call it. Check: audio both ways, hang up, outcome saved, the call shows in the Call log with its talk time.
 
-## Rules built in
-- Dials only numbers imported as leads. The server rechecks everything on every call.
-- Blocked: Caribbean, US territories, premium and Alaska area codes.
-- Calling window 9am to 8pm in the lead's local time (from state or timezone column).
-- No call-count limits by default (set DAILY_CAP_PER_NUMBER or MONTHLY_CAP_PER_NUMBER in .env if you ever want one). Do-not-call outcome blocks the number permanently.
-- Max call length 15 minutes. Password lockout after 5 bad tries.
+## How it works
+- **Any country.** Every number is accepted. Numbers written without a `+` get the default country you pick on the Leads tab (e.g. `07700 900123` with United Kingdom becomes `+447700900123`).
+- **Twilio Geo permissions are the real limit.** Enable only the countries you call (Voice > Settings > Geo permissions), or calls to them fail. This is also your protection against toll fraud if the app password leaks.
+- **Leads:** name and phone are required; company, country, email and notes are optional. The server only dials numbers saved as leads.
+- **Bulk add:** paste cells from Google Sheets / Excel, paste a CSV, or type `Name, Number` one per line. The app finds the Name and Phone columns from the header (any order, extra columns ignored, title rows above the header are fine) and shows what will be imported and what will be skipped, with reasons, before anything is saved. Excel files: save as CSV or copy/paste the cells.
+- **After each call:** an optional note (email, follow-up details) and one outcome: No answer, Hung up, Not interested, Potential, Meeting booked.
+- **Call log tab:** every call with Twilio's line result (answered / no answer / busy) and billed talk time, filters, editable outcome and notes, CSV export.
+- **Clocks:** UK, US (pick the zone) and India time in the header.
+- Max call length defaults to 4 hours (Twilio's limit); set `MAX_CALL_SECONDS` to lower it. Password lockout after 5 bad tries.
 
-## Before you ramp up (not optional)
-- Telemarketing to businesses: still scrub against the National DNC list and state lists, and honor opt-outs immediately. Check state rules (e.g. FL, OK, TX, others have their own).
+## Before you ramp up
+- Telemarketing rules differ by country (UK TPS/CTPS, US National DNC, etc.). Scrub your lists and honour opt-outs.
 - Trust Hub: register a Business Profile, SHAKEN/STIR, CNAM and Voice Integrity, or your calls will show as spam.
-- Start at 5 to 10 calls/day and watch answer rates before scaling. Use one real human voice. Say who you are in the first sentence.
-- Never expose `/api/token` or `/voice` without the checks in this app. Open dialers get used for toll fraud.
 
-## CSV format
-`name,company,phone,state,timezone,notes` (state like TX; timezone optional, e.g. America/Chicago).
-Download the template from the app.
-
-Estimated cost: about $0.014/min outbound plus $0.004/min browser leg, plus $1.15/month for the number.
+Cost depends on the destination country (see Twilio's voice pricing page), plus about $0.004/min for the browser leg and the monthly number fee.
 
 ## Guest test link (temporary, saves nothing)
 
