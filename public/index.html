@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dialer</title>
+<style>
+:root{--bg:#f3f5f7;--card:#fff;--ink:#13202b;--muted:#5b6a77;--line:#dce2e8;--accent:#0b7a75;--accent-ink:#fff;--danger:#b42318;--ok:#18794e;--warn:#9a6700;--chip:#eef2f5;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--bg:#0e151b;--card:#16202a;--ink:#e6edf3;--muted:#93a2af;--line:#26333e;--accent:#2bb3ab;--accent-ink:#04201e;--danger:#f97066;--ok:#47c98a;--warn:#e3b341;--chip:#1f2c37}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+[hidden]{display:none!important}
+.btn{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:9px 14px;font-weight:600}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.login{min-height:100vh;display:grid;place-items:center;padding:16px}
+.login form{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:28px;width:100%;max-width:360px;display:grid;gap:12px}
+.login h1{margin:0;font-size:22px}
+.login p{margin:0;color:var(--muted)}
+input[type=password],textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--bg);color:var(--ink);font:inherit}
+textarea{resize:vertical;min-height:70px}
+.err{color:var(--danger);min-height:1.4em;font-size:14px}
+.wrap{max-width:1180px;margin:0 auto;padding:20px 16px 48px}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+header h1{margin:0;font-size:20px}
+.pills{display:flex;gap:8px;flex-wrap:wrap}
+.pill{background:var(--chip);border-radius:999px;padding:4px 12px;font-size:13px;color:var(--muted)}
+.pill b{color:var(--ink);font-weight:600}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.stat .v{font-size:26px;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums}
+.stat .l{color:var(--muted);font-size:13px}
+.grid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:16px;align-items:start}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px}
+.card h2{margin:0 0 12px;font-size:16px}
+.lead-name{font-size:22px;font-weight:700;margin:0}
+.lead-sub{color:var(--muted);margin:2px 0 10px}
+.facts{display:flex;gap:16px;flex-wrap:wrap;font-size:14px;margin-bottom:10px}
+.facts span{color:var(--muted)}
+.notes{background:var(--chip);border-radius:8px;padding:8px 12px;font-size:14px;margin-bottom:12px;white-space:pre-wrap}
+.status{font-weight:600;margin:8px 0}
+.timer{font-size:34px;font-weight:700;font-variant-numeric:tabular-nums;margin:0 0 10px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.big{padding:12px 22px;font-size:16px}
+.empty{color:var(--muted);padding:12px 0}
+.outcome{margin-top:16px;border-top:1px solid var(--line);padding-top:14px}
+.outcome h3{margin:0 0 8px;font-size:15px}
+.opts{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.opt[aria-pressed=true]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.qhead{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.qhead h2{margin:0}
+.list{display:grid;gap:6px;max-height:560px;overflow:auto}
+.item{display:grid;grid-template-columns:1fr auto;gap:2px 10px;text-align:left;width:100%;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:9px 12px}
+.item:hover{border-color:var(--muted)}
+.item[aria-current=true]{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.item .n{font-weight:600}
+.item .s{color:var(--muted);font-size:13px}
+.item .why{grid-column:1/-1;font-size:12.5px;color:var(--warn)}
+.chip{font-size:12px;background:var(--chip);border-radius:999px;padding:2px 9px;color:var(--muted);align-self:start;white-space:nowrap}
+.item.blocked .n{color:var(--muted)}
+.import-note{color:var(--muted);font-size:13px;margin-top:8px}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;max-width:90vw;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s}
+#toast.show{opacity:1}
+.goal{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:12px}
+.goal-top{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+.goal-num{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums}
+.goal-num small{font-size:15px;color:var(--muted);font-weight:500}
+.bar{height:12px;border-radius:999px;background:var(--chip);overflow:hidden;margin:8px 0 6px}
+.bar>i{display:block;height:100%;width:0;background:var(--accent);border-radius:999px;transition:width .3s}
+.goal-sub{color:var(--muted);font-size:13px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.goal input{width:64px;border:1px solid var(--line);border-radius:6px;padding:2px 6px;background:var(--bg);color:var(--ink);font:inherit}
+.addpanel{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px;display:grid;gap:10px;background:var(--bg)}
+.addpanel h3{margin:0;font-size:14px}
+.fields{display:grid;grid-template-columns:1.3fr 1fr 1fr 70px;gap:8px}
+.addpanel input[type=text],.addpanel input[type=tel],.addpanel input[type=number]{width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--card);color:var(--ink);font:inherit}
+.addpanel textarea{background:var(--card);min-height:90px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+.preview{font-size:13px;color:var(--muted)}
+.preview b{color:var(--ink)}
+@media (prefers-reduced-motion:reduce){.bar>i{transition:none}}
+@media (max-width:860px){.fields{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}}
+@media (prefers-reduced-motion:reduce){#toast{transition:none}}
+</style>
+</head>
+<body>
+
+<div class="login" id="login">
+  <form id="loginForm">
+    <h1>Dialer</h1>
+    <p>Enter the app password to continue.</p>
+    <label for="pw" class="sr" style="position:absolute;left:-9999px">Password</label>
+    <input type="password" id="pw" autocomplete="current-password" placeholder="Password" required>
+    <div class="err" id="loginErr" role="alert"></div>
+    <button class="btn primary" type="submit">Sign in</button>
+  </form>
+</div>
+
+<div class="wrap" id="app" hidden>
+  <header>
+    <h1>Dialer</h1>
+    <div class="pills">
+      <span class="pill">Phone line: <b id="pillDevice">Starting</b></span>
+      <span class="pill" id="pillLimits"></span>
+      <button class="btn" id="guestToggle" aria-expanded="false" style="padding:3px 12px;font-size:13px">Guest link</button>
+    </div>
+  </header>
+
+  <div class="addpanel" id="guestPanel" hidden>
+    <h3>Temporary guest link (test call to one number, nothing saved)</h3>
+    <form id="guestForm" class="fields" autocomplete="off" style="grid-template-columns:1.6fr 1fr 1fr 1fr">
+      <label class="preview">Number (optional)<input type="tel" id="gNumber" placeholder="Empty = guest types a UK number"></label>
+      <label class="preview">Link lasts (min)<input type="number" id="gMinutes" value="30" min="5" max="240"></label>
+      <label class="preview">Max calls<input type="number" id="gMaxCalls" value="3" min="1" max="5"></label>
+      <label class="preview">Max sec per call<input type="number" id="gMaxSec" value="300" min="30" max="600"></label>
+      <button class="btn primary" type="submit" style="grid-column:1/-1;justify-self:start">Create guest link</button>
+    </form>
+    <div class="preview">Number filled in: the guest can only call that one. Empty: the guest types the number, and only UK mobiles and landlines are allowed. Links vanish when the server restarts.</div>
+    <div id="guestList" class="list" style="max-height:220px"></div>
+  </div>
+
+  <section class="goal" aria-label="Calls today">
+    <div class="goal-top">
+      <div class="goal-num"><span id="gCalls">0</span> <small>/ <span id="gGoalTxt">15</span> calls today</small></div>
+      <label style="font-size:13px;color:var(--muted)">Daily goal <input type="number" id="goalIn" min="1" max="500" value="15"></label>
+    </div>
+    <div class="bar" id="gBar" role="progressbar" aria-label="Calls made today" aria-valuemin="0" aria-valuemax="15" aria-valuenow="0"><i id="gFill"></i></div>
+    <div class="goal-sub"><span><b id="sAns">0</b> answered</span><span id="gLeft"></span></div>
+  </section>
+  <section class="stats" aria-label="Today's totals">
+    <div class="stat"><div class="v" id="sMin">0</div><div class="l">Talk minutes</div></div>
+    <div class="stat"><div class="v" id="sCost">$0.00</div><div class="l">Estimated call cost</div></div>
+    <div class="stat"><div class="v" id="sInt">0</div><div class="l">Interested</div></div>
+    <div class="stat"><div class="v" id="sCalls">0</div><div class="l">Calls logged</div></div>
+  </section>
+
+  <main class="grid">
+    <section class="card" aria-label="Call console">
+      <h2>Call</h2>
+      <div id="noLead" class="empty">Pick a lead from the queue, or start with the next one. <div style="margin-top:10px"><button class="btn primary" id="nextBtn0">Next lead</button></div></div>
+      <div id="leadBox" hidden>
+        <p class="lead-name" id="lName"></p>
+        <p class="lead-sub" id="lCompany"></p>
+        <div class="facts">
+          <div><span>Phone</span> <b id="lPhone"></b></div>
+          <div><span>Their time</span> <b id="lTime"></b></div>
+          <div><span>Attempts</span> <b id="lAtt"></b></div>
+        </div>
+        <div class="notes" id="lNotes" hidden></div>
+        <div class="status" id="status" role="status" aria-live="polite">Ready</div>
+        <p class="timer" id="timer" hidden>00:00</p>
+        <div class="row">
+          <button class="btn primary big" id="callBtn">Call</button>
+          <button class="btn danger big" id="hangBtn" hidden>Hang up</button>
+          <button class="btn big" id="muteBtn" hidden aria-pressed="false">Mute</button>
+          <button class="btn big" id="nextBtn">Next lead</button>
+        </div>
+        <div class="outcome" id="outcome" hidden>
+          <h3>How did it go? Pick one to continue.</h3>
+          <div class="opts" id="opts"></div>
+          <label for="callNotes" style="display:block;font-size:13px;color:var(--muted);margin-bottom:4px">Notes (optional)</label>
+          <textarea id="callNotes"></textarea>
+          <div class="row" style="margin-top:10px">
+            <button class="btn primary" id="saveBtn" disabled>Save and next lead</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" aria-label="Lead queue">
+      <div class="qhead">
+        <h2>Queue <span class="chip" id="qCount">0</span></h2>
+        <div class="row">
+          <button class="btn primary" id="addToggle" aria-expanded="false">Add leads</button>
+          <button class="btn" id="importBtn">Import CSV</button>
+          <button class="btn" id="tplBtn">Template</button>
+          <button class="btn" id="exportBtn">Export log</button>
+        </div>
+      </div>
+      <input type="file" id="file" accept=".csv,text/csv" hidden>
+      <div class="addpanel" id="addPanel" hidden>
+        <h3>Add one number</h3>
+        <form id="oneForm" class="fields" autocomplete="off">
+          <input type="tel" id="fPhone" placeholder="Phone (required)" aria-label="Phone" required>
+          <input type="text" id="fName" placeholder="Name" aria-label="Name">
+          <input type="text" id="fCompany" placeholder="Company" aria-label="Company">
+          <input type="text" id="fState" placeholder="State" aria-label="State" maxlength="2" style="text-transform:uppercase">
+          <button class="btn primary" type="submit" style="grid-column:1/-1;justify-self:start">Add to queue</button>
+        </form>
+        <h3>Paste from your sheet</h3>
+        <textarea id="pasteBox" placeholder="Copy the cells in Google Sheets or Excel and paste them here. A header row is optional." aria-label="Pasted sheet cells"></textarea>
+        <div class="preview" id="pasteInfo">Nothing pasted yet.</div>
+        <div class="row"><button class="btn primary" id="pasteBtn" disabled>Add pasted rows</button></div>
+        <label style="font-size:13px;color:var(--muted)">State for rows without one <input type="text" id="defState" maxlength="2" value="TX" style="width:54px;text-transform:uppercase;border:1px solid var(--line);border-radius:6px;padding:2px 6px;background:var(--card);color:var(--ink);font:inherit"></label>
+      </div>
+      <div class="list" id="list"></div>
+      <p class="import-note">Each lead needs a state (or timezone) so the app knows their local calling hours.</p>
+    </section>
+  </main>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script src="/vendor/twilio.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+const OUTCOMES = [['no_answer','No answer'],['voicemail','Voicemail'],['callback','Call back later'],['interested','Interested'],['not_interested','Not interested'],['wrong_number','Wrong number'],['dnc','Do not call']];
+let pw = '';
+try { pw = sessionStorage.getItem('dialerPw') || ''; } catch (e) {}
+let state = { leads: [], stats: {}, limits: {} };
+let device = null, call = null, current = null, lastCall = null;
+let startedAt = null, tick = null, ended = true, picked = null, busy = false;
+
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === 'class') el.className = v; else if (k === 'text') el.textContent = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v); else el.setAttribute(k, v);
+  }
+  kids.flat().forEach((c) => c != null && el.append(c));
+  return el;
+}
+let toastT;
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 4200); }
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, Object.assign({}, opts, { headers: Object.assign({ 'content-type': 'application/json', 'x-app-password': pw }, opts.headers || {}) }));
+  if (r.status === 401) { showLogin('Wrong password'); throw new Error('Not signed in'); }
+  if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || r.statusText); }
+  return r;
+}
+
+function showLogin(msg) { $('#app').hidden = true; $('#login').hidden = false; $('#loginErr').textContent = msg || ''; pw = ''; try { sessionStorage.removeItem('dialerPw'); } catch (e) {} }
+$('#loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault(); pw = $('#pw').value; $('#loginErr').textContent = '';
+  try { await api('/api/state'); try { sessionStorage.setItem('dialerPw', pw); } catch (e2) {} start(); } catch (err) { if (err.message !== 'Not signed in') $('#loginErr').textContent = err.message; }
+});
+
+async function start() {
+  $('#login').hidden = true; $('#app').hidden = false;
+  await refresh();
+  initDevice();
+  setInterval(() => { if (ended && !busy) refresh(); }, 60000);
+}
+
+async function initDevice() {
+  try {
+    const { token } = await (await api('/api/token')).json();
+    device = new Twilio.Device(token, { logLevel: 1, codecPreferences: ['opus', 'pcmu'], closeProtection: true });
+    device.on('error', (e) => toast(e.message || 'Phone line error'));
+    device.on('tokenWillExpire', async () => { try { device.updateToken((await (await api('/api/token')).json()).token); } catch (e) {} });
+    $('#pillDevice').textContent = 'Ready';
+  } catch (e) { $('#pillDevice').textContent = 'Not connected'; toast(e.message); }
+}
+
+async function refresh() {
+  try { state = await (await api('/api/state')).json(); } catch (e) { return; }
+  const s = state.stats, l = state.limits;
+  $('#sCalls').textContent = s.calls; $('#sMin').textContent = s.talkMinutes; $('#sCost').textContent = '$' + s.estCost.toFixed(2); $('#sInt').textContent = s.interested; $('#sAns').textContent = s.answered;
+  drawGoal(s.calls);
+  const caps = [l.daily > 0 ? l.daily + '/day' : '', l.monthly > 0 ? l.monthly + '/month' : ''].filter(Boolean).join(', ');
+  $('#pillLimits').textContent = 'Hours ' + fmtHour(l.windowStart) + '–' + fmtHour(l.windowEnd) + ' their time' + (caps ? ' · ' + caps + ' per number' : '');
+  renderList(); renderLead();
+}
+function fmtHour(x) { const h12 = x % 12 === 0 ? 12 : x % 12; return h12 + (x >= 12 && x < 24 ? 'pm' : 'am'); }
+
+function statusLabel(s) { return ({ new: 'New', no_answer: 'No answer', voicemail: 'Voicemail', callback: 'Callback', interested: 'Interested', not_interested: 'Not interested', wrong_number: 'Wrong number', dnc: 'Do not call' })[s] || s; }
+
+function renderList() {
+  const list = $('#list'); list.replaceChildren();
+  $('#qCount').textContent = state.leads.filter((l) => l.callable).length + ' ready / ' + state.leads.length;
+  if (!state.leads.length) { list.append(h('div', { class: 'empty', text: 'No leads yet. Import a CSV to start.' })); return; }
+  const sorted = state.leads.slice().sort((a, b) => (b.callable - a.callable) || (a.attempts - b.attempts));
+  sorted.forEach((l) => {
+    const it = h('button', { class: 'item' + (l.callable ? '' : ' blocked'), type: 'button', 'aria-current': current && current.id === l.id ? 'true' : 'false', onclick: () => pick(l.id) },
+      h('span', { class: 'n', text: l.name || l.phone }),
+      h('span', { class: 'chip', text: statusLabel(l.status) }),
+      h('span', { class: 's', text: [l.company, l.phone, l.localTime ? l.localTime + ' there' : ''].filter(Boolean).join(' · ') }),
+      l.callable ? null : h('span', { class: 'why', text: l.reason || '' }));
+    list.append(it);
+  });
+}
+
+function pick(id) {
+  if (!ended || (lastCall && !picked && !$('#outcome').hidden)) { toast('Finish the current call first.'); return; }
+  current = state.leads.find((l) => l.id === id) || null; resetConsole(); renderList(); renderLead();
+}
+function nextLead() {
+  if (!ended || !$('#outcome').hidden) { toast('Finish the current call first.'); return; }
+  const n = state.leads.filter((l) => l.callable && (!current || l.id !== current.id)).sort((a, b) => a.attempts - b.attempts)[0] || state.leads.find((l) => l.callable);
+  if (!n) { toast('No leads are callable right now.'); return; }
+  pick(n.id);
+}
+function resetConsole() { $('#outcome').hidden = true; $('#status').textContent = 'Ready'; $('#timer').hidden = true; picked = null; lastCall = null; }
+
+function renderLead() {
+  if (current) current = state.leads.find((l) => l.id === current.id) || current;
+  $('#noLead').hidden = !!current; $('#leadBox').hidden = !current;
+  if (!current) return;
+  $('#lName').textContent = current.name || current.phone; $('#lCompany').textContent = current.company || '';
+  $('#lPhone').textContent = current.phone; $('#lTime').textContent = current.localTime || 'unknown'; $('#lAtt').textContent = current.attempts;
+  $('#lNotes').hidden = !current.notes; $('#lNotes').textContent = current.notes || '';
+  const inCall = !ended;
+  $('#callBtn').hidden = inCall; $('#hangBtn').hidden = !inCall; $('#muteBtn').hidden = !inCall;
+  $('#callBtn').disabled = !current.callable || !$('#outcome').hidden;
+  if (ended && $('#outcome').hidden) $('#status').textContent = current.callable ? 'Ready' : (current.reason || 'Not callable');
+}
+
+async function startCall() {
+  if (!current || !device || busy) { if (!device) toast('Phone line is not connected yet.'); return; }
+  busy = true;
+  try {
+    await refresh();
+    const l = state.leads.find((x) => x.id === current.id);
+    if (!l || !l.callable) { toast(l ? l.reason : 'Lead not found'); return; }
+    ended = false; startedAt = null; $('#status').textContent = 'Calling…'; renderLead();
+    call = await device.connect({ params: { To: l.phone, LeadId: l.id } });
+    call.on('ringing', () => { $('#status').textContent = 'Ringing…'; });
+    call.on('accept', () => { startedAt = Date.now(); $('#status').textContent = 'Connected'; $('#timer').hidden = false; tick = setInterval(drawTimer, 500); drawTimer(); });
+    ['disconnect', 'cancel', 'reject'].forEach((ev) => call.on(ev, finish));
+    call.on('error', (e) => { toast(e.message || 'Call error'); finish(); });
+  } catch (e) { toast(e.message || 'Could not start the call'); ended = true; call = null; renderLead(); }
+  finally { busy = false; }
+}
+function sidOf(c) { return c ? ((c.parameters && c.parameters.CallSid) || c.outboundConnectionId || null) : null; }
+function drawTimer() { if (!startedAt) return; const s = Math.floor((Date.now() - startedAt) / 1000); $('#timer').textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); }
+function finish() {
+  if (ended) return; ended = true; clearInterval(tick);
+  const dur = startedAt ? Math.round((Date.now() - startedAt) / 1000) : 0;
+  lastCall = { sid: sidOf(call), leadId: current.id, durationSec: dur };
+  call = null; $('#status').textContent = 'Call ended'; $('#muteBtn').setAttribute('aria-pressed', 'false'); $('#muteBtn').textContent = 'Mute';
+  showOutcome();
+}
+function showOutcome() {
+  picked = null; $('#callNotes').value = ''; $('#saveBtn').disabled = true;
+  const box = $('#opts'); box.replaceChildren();
+  OUTCOMES.forEach(([k, label]) => box.append(h('button', { class: 'btn opt', type: 'button', 'aria-pressed': 'false', onclick: (e) => {
+    picked = k; box.querySelectorAll('.opt').forEach((b) => b.setAttribute('aria-pressed', 'false')); e.currentTarget.setAttribute('aria-pressed', 'true'); $('#saveBtn').disabled = false;
+  }, text: label })));
+  $('#outcome').hidden = false; renderLead();
+}
+async function saveOutcome() {
+  if (!picked || !lastCall) return;
+  $('#saveBtn').disabled = true;
+  try {
+    await api('/api/calls/outcome', { method: 'POST', body: JSON.stringify({ callSid: lastCall.sid, leadId: lastCall.leadId, outcome: picked, durationSec: lastCall.durationSec, notes: $('#callNotes').value }) });
+    resetConsole(); await refresh(); nextLead();
+  } catch (e) { toast(e.message); $('#saveBtn').disabled = false; }
+}
+
+$('#callBtn').addEventListener('click', startCall);
+$('#hangBtn').addEventListener('click', () => { if (call) call.disconnect(); });
+$('#muteBtn').addEventListener('click', () => { if (!call) return; const m = !call.isMuted(); call.mute(m); $('#muteBtn').setAttribute('aria-pressed', String(m)); $('#muteBtn').textContent = m ? 'Unmute' : 'Mute'; });
+$('#nextBtn').addEventListener('click', nextLead);
+$('#nextBtn0').addEventListener('click', nextLead);
+$('#saveBtn').addEventListener('click', saveOutcome);
+
+let goal = 15;
+try { goal = Math.max(1, parseInt(localStorage.getItem('dialerGoal'), 10) || 15); } catch (e) {}
+function drawGoal(n) {
+  $('#goalIn').value = goal; $('#gGoalTxt').textContent = goal; $('#gCalls').textContent = n;
+  $('#gFill').style.width = Math.min(100, Math.round(n / goal * 100)) + '%';
+  const b = $('#gBar'); b.setAttribute('aria-valuemax', goal); b.setAttribute('aria-valuenow', Math.min(n, goal));
+  $('#gLeft').textContent = n >= goal ? 'Goal reached' : (goal - n) + ' to go';
+}
+$('#goalIn').addEventListener('change', (e) => {
+  goal = Math.max(1, Math.min(500, parseInt(e.target.value, 10) || 15));
+  try { localStorage.setItem('dialerGoal', String(goal)); } catch (err) {}
+  drawGoal(state.stats.calls || 0);
+});
+
+$('#addToggle').addEventListener('click', () => {
+  const p = $('#addPanel'); p.hidden = !p.hidden; $('#addToggle').setAttribute('aria-expanded', String(!p.hidden));
+  if (!p.hidden) $('#fPhone').focus();
+});
+function defaultState() { return ($('#defState').value || '').trim().toUpperCase(); }
+async function addLeads(rows) {
+  const r = await (await api('/api/leads/import', { method: 'POST', body: JSON.stringify({ leads: rows }) })).json();
+  const why = r.skipped.length ? ' Skipped ' + r.skipped.length + ': ' + r.skipped[0].reason + ' (row ' + r.skipped[0].row + ').' : '';
+  toast('Added ' + r.added + (r.added === 1 ? ' lead.' : ' leads.') + why);
+  await refresh();
+  return r;
+}
+$('#oneForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    const r = await addLeads([{ name: $('#fName').value.trim(), company: $('#fCompany').value.trim(), phone: $('#fPhone').value.trim(), state: ($('#fState').value || defaultState()).trim().toUpperCase() }]);
+    if (r.added) { ['#fPhone', '#fName', '#fCompany'].forEach((id) => { $(id).value = ''; }); $('#fPhone').focus(); }
+  } catch (err) { toast(err.message); }
+});
+
+const PHONE_LIKE = /^\+?[\d\s().-]{10,18}$/;
+function looksPhone(v) { const d = String(v || '').replace(/\D/g, ''); return PHONE_LIKE.test(String(v || '').trim()) && d.length >= 10 && d.length <= 15; }
+function parsePasted(text) {
+  const t = text.replace(/^﻿/, '');
+  const delim = t.includes('\t') ? '\t' : ',';
+  const rows = parseRows(t, delim).map((r) => r.map((c) => c.trim()));
+  if (!rows.length) return { leads: [], error: 'Nothing to read.' };
+  const width = Math.max.apply(null, rows.map((r) => r.length));
+  const hasHeader = !rows[0].some(looksPhone) && rows.length > 1 && rows[0].some((c) => /phone|number|mobile|cell|tel/i.test(c));
+  let idx = { name: -1, company: -1, phone: -1, state: -1, notes: -1 }, body = rows;
+  if (hasHeader) {
+    const head = rows[0].map((c) => c.toLowerCase()); body = rows.slice(1);
+    head.forEach((c, i) => {
+      if (idx.phone < 0 && /phone|number|mobile|cell|tel/.test(c)) idx.phone = i;
+      else if (idx.company < 0 && /company|business|firm/.test(c)) idx.company = i;
+      else if (idx.state < 0 && /^(state|st)$/.test(c)) idx.state = i;
+      else if (idx.notes < 0 && /note|comment|remark/.test(c)) idx.notes = i;
+      else if (idx.name < 0 && /name|contact|owner|person/.test(c)) idx.name = i;
+    });
+  } else {
+    let best = -1, bestN = 0;
+    for (let c = 0; c < width; c++) { const n = rows.filter((r) => looksPhone(r[c])).length; if (n > bestN) { bestN = n; best = c; } }
+    if (bestN >= Math.ceil(rows.length * 0.5)) idx.phone = best;
+    const used = new Set([idx.phone]);
+    for (let c = 0; c < width; c++) {
+      if (used.has(c)) continue;
+      const col = rows.map((r) => r[c] || '').filter(Boolean);
+      if (col.length && col.every((v) => /^[A-Za-z]{2}$/.test(v)) && idx.state < 0) { idx.state = c; used.add(c); }
+    }
+    const rest = [];
+    for (let c = 0; c < width; c++) if (!used.has(c)) rest.push(c);
+    if (rest[0] != null) idx.name = rest[0];
+    if (rest[1] != null) idx.company = rest[1];
+    if (rest[2] != null) idx.notes = rest[2];
+  }
+  if (idx.phone < 0) return { leads: [], error: 'Could not find a phone number column.' };
+  const get = (r, i) => (i >= 0 ? (r[i] || '') : '');
+  const leads = body.filter((r) => r.some(Boolean)).map((r) => ({ name: get(r, idx.name) || get(r, idx.company), company: get(r, idx.company), phone: get(r, idx.phone), state: (get(r, idx.state) || defaultState()).toUpperCase(), notes: get(r, idx.notes) }));
+  return { leads, error: null };
+}
+let pasted = [];
+function previewPaste() {
+  const box = $('#pasteInfo'); box.replaceChildren();
+  const text = $('#pasteBox').value;
+  if (!text.trim()) { pasted = []; box.textContent = 'Nothing pasted yet.'; $('#pasteBtn').disabled = true; return; }
+  const r = parsePasted(text); pasted = r.leads;
+  if (r.error) { box.textContent = r.error; $('#pasteBtn').disabled = true; return; }
+  box.append(h('b', { text: r.leads.length + ' rows' }), document.createTextNode(' ready. First: ' + r.leads.slice(0, 3).map((l) => (l.name || l.company || 'Lead') + ' ' + l.phone + (l.state ? ' ' + l.state : '')).join('  |  ')));
+  $('#pasteBtn').disabled = !r.leads.length;
+}
+$('#pasteBox').addEventListener('input', previewPaste);
+$('#defState').addEventListener('input', previewPaste);
+$('#pasteBtn').addEventListener('click', async () => {
+  if (!pasted.length) return; $('#pasteBtn').disabled = true;
+  try { await addLeads(pasted); $('#pasteBox').value = ''; previewPaste(); } catch (err) { toast(err.message); $('#pasteBtn').disabled = false; }
+});
+
+function parseRows(text, delim) {
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += c; }
+    else if (c === '"') q = true;
+    else if (c === delim) { row.push(cell); cell = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(cell); cell = ''; if (row.some((x) => x.trim() !== '')) rows.push(row); row = []; }
+    else cell += c;
+  }
+  row.push(cell); if (row.some((x) => x.trim() !== '')) rows.push(row);
+  return rows;
+}
+function parseCSV(text) {
+  const rows = parseRows(text, ',');
+  if (!rows.length) return [];
+  const head = rows.shift().map((x) => x.trim().toLowerCase());
+  return rows.map((r) => Object.fromEntries(head.map((k, i) => [k, (r[i] || '').trim()])));
+}
+function download(name, text, type) { const a = h('a', { href: URL.createObjectURL(new Blob([text], { type })), download: name }); document.body.append(a); a.click(); a.remove(); }
+
+$('#importBtn').addEventListener('click', () => $('#file').click());
+$('#file').addEventListener('change', async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const leads = parseCSV(await f.text());
+    await addLeads(leads.map((l) => Object.assign({}, l, { state: l.state || defaultState() })));
+  } catch (err) { toast(err.message); }
+  e.target.value = '';
+});
+$('#tplBtn').addEventListener('click', () => download('leads-template.csv', 'name,company,phone,state,timezone,notes\nJane Smith,Smith Roofing,(214) 555-0123,TX,,Found on Google Maps\n', 'text/csv'));
+$('#exportBtn').addEventListener('click', async () => { try { download('call-log.csv', await (await api('/api/export.csv')).text(), 'text/csv'); } catch (e) { toast(e.message); } });
+
+// ----- guest links -----
+function guestUrl(token) { return location.origin + '/g/' + token; }
+async function copyText(text, inputEl) {
+  try { await navigator.clipboard.writeText(text); toast('Link copied.'); }
+  catch (e) { if (inputEl) { inputEl.select(); } toast('Select the link and copy it.'); }
+}
+async function loadGuests() {
+  const box = $('#guestList'); box.replaceChildren();
+  let list = [];
+  try { list = (await (await api('/api/guest')).json()).guests; } catch (e) { return; }
+  if (!list.length) { box.append(h('div', { class: 'empty', text: 'No active guest links.' })); return; }
+  list.forEach((g) => {
+    const inp = h('input', { type: 'text', readonly: 'readonly', value: guestUrl(g.token), 'aria-label': 'Guest link', style: 'width:100%;border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:var(--card);color:var(--ink);font:inherit;font-size:13px' });
+    const mins = Math.max(0, Math.ceil((g.expiresAt - Date.now()) / 60000));
+    box.append(h('div', { class: 'item', style: 'cursor:default' },
+      h('span', { class: 'n', text: g.masked }),
+      h('span', { class: 'chip', text: g.calls + '/' + g.maxCalls + ' calls · ' + mins + ' min left' }),
+      h('span', { style: 'grid-column:1/-1;display:grid;grid-template-columns:1fr auto auto;gap:6px' },
+        inp,
+        h('button', { class: 'btn', type: 'button', onclick: () => copyText(inp.value, inp), text: 'Copy' }),
+        h('button', { class: 'btn danger', type: 'button', onclick: async () => { try { await api('/api/guest/' + encodeURIComponent(g.token), { method: 'DELETE' }); toast('Guest link revoked.'); loadGuests(); } catch (e) { toast(e.message); } }, text: 'Revoke' }))));
+  });
+}
+$('#guestToggle').addEventListener('click', () => {
+  const p = $('#guestPanel'); p.hidden = !p.hidden; $('#guestToggle').setAttribute('aria-expanded', String(!p.hidden));
+  if (!p.hidden) { loadGuests(); $('#gNumber').focus(); }
+});
+$('#guestForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    const body = { number: $('#gNumber').value.trim(), minutes: Number($('#gMinutes').value), maxCalls: Number($('#gMaxCalls').value), maxCallSeconds: Number($('#gMaxSec').value) };
+    const r = await (await api('/api/guest/create', { method: 'POST', body: JSON.stringify(body) })).json();
+    $('#gNumber').value = '';
+    await copyText(guestUrl(r.token));
+    loadGuests();
+  } catch (err) { toast(err.message); }
+});
+
+if (pw) { api('/api/state').then(start).catch(() => showLogin('')); }
+</script>
+</body>
+</html>
